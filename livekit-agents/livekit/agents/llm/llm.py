@@ -68,6 +68,8 @@ class ChatChunk(BaseModel):
     id: str
     delta: ChoiceDelta | None = None
     usage: CompletionUsage | None = None
+    extra: dict[str, Any] | None = None
+    """Extra data for this chunk. Can include metadata like message_id, force_flush, etc."""
 
 
 class LLMError(BaseModel):

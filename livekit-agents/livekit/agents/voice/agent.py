@@ -221,6 +221,57 @@ class Agent:
         """
         pass
 
+    async def on_pipeline_started(
+        self,
+        audio_output: Any,
+        text_output: Any,
+    ) -> None:
+        """Called when the generation pipeline has started for a new reply.
+
+        This hook provides access to the audio and text output objects for advanced use cases
+        like message separation or custom synchronization.
+
+        Args:
+            audio_output: The audio output object for this reply
+            text_output: The text output object for this reply
+        """
+        pass
+
+    async def on_pipeline_completed(self) -> None:
+        """Called when the generation pipeline has completed for a reply."""
+        pass
+
+    def on_vad_event(self, ev: vad.VADEvent) -> None:
+        """Called when a VAD event is received.
+
+        This hook is called synchronously before the internal VAD event handler.
+        Use this for tracking VAD state transitions or collecting metrics.
+
+        Args:
+            ev: The VAD event containing type and timing information
+        """
+        pass
+
+    def on_llm_chunk(self, chunk: llm.ChatChunk, timing_info: dict[str, Any] | None) -> None:
+        """Called for each LLM chunk received during generation.
+
+        This hook is called synchronously as chunks are processed.
+        Use this for tracking timing metrics like first filler/non-filler chunks.
+
+        Args:
+            chunk: The ChatChunk from the LLM
+            timing_info: Optional timing information including ttft (time to first token)
+        """
+        pass
+
+    def on_audio_segment_complete(self) -> None:
+        """Called when an audio segment is complete.
+
+        This is called when sentinel markers indicate a message boundary in the audio stream.
+        Use this for synchronizing message boundaries with audio playback.
+        """
+        pass
+
     def stt_node(
         self, audio: AsyncIterable[rtc.AudioFrame], model_settings: ModelSettings
     ) -> (

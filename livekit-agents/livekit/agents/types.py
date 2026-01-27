@@ -38,6 +38,18 @@ class FlushSentinel:
     pass
 
 
+class MessageSeparateSentinel(FlushSentinel):
+    """Marks boundaries between LLM messages for multi-message turns."""
+
+    pass
+
+
+class AudioFlushSentinel:
+    """Special marker for flushing audio between messages."""
+
+    pass
+
+
 class NotGiven:
     def __bool__(self) -> Literal[False]:
         return False
