@@ -25,7 +25,12 @@ from ..llm import (
 )
 from ..log import logger
 from ..telemetry import trace_types, tracer
-from ..types import USERDATA_TIMED_TRANSCRIPT, FlushSentinel, NotGivenOr
+from ..types import (
+    USERDATA_TIMED_TRANSCRIPT,
+    AudioFlushSentinel,
+    FlushSentinel,
+    NotGivenOr,
+)
 from ..utils import aio, is_given
 from ..utils.aio import itertools
 from . import io
@@ -180,6 +185,9 @@ async def _llm_inference_task(
     return True
 
 
+SentinelCallback = Callable[[FlushSentinel], None]
+
+
 @dataclass
 class _TTSGenerationData:
     audio_ch: aio.Chan[rtc.AudioFrame]
@@ -193,13 +201,14 @@ def perform_tts_inference(
     input: AsyncIterable[str | FlushSentinel],
     model_settings: ModelSettings,
     text_transforms: Sequence[TextTransforms] | None,
+    on_sentinel: SentinelCallback | None = None,
 ) -> tuple[asyncio.Task[bool], _TTSGenerationData]:
     audio_ch = aio.Chan[rtc.AudioFrame]()
     timed_texts_fut = asyncio.Future[Optional[aio.Chan[io.TimedString]]]()
     data = _TTSGenerationData(audio_ch=audio_ch, timed_texts_fut=timed_texts_fut)
 
     tts_task = asyncio.create_task(
-        _tts_inference_task(node, input, model_settings, data, text_transforms)
+        _tts_inference_task(node, input, model_settings, data, text_transforms, on_sentinel)
     )
 
     def _inference_done(_: asyncio.Task[bool]) -> None:
@@ -220,6 +229,7 @@ async def _tts_inference_task(
     model_settings: ModelSettings,
     data: _TTSGenerationData,
     text_transforms: Sequence[TextTransforms] | None,
+    on_sentinel: SentinelCallback | None = None,
 ) -> bool:
     start_time: float | None = None
     audio_ch, timed_texts_fut = data.audio_ch, data.timed_texts_fut
@@ -275,6 +285,12 @@ async def _tts_inference_task(
     async def _input_segment() -> AsyncGenerator[str, None]:
         async for chunk in input_tee[1]:
             if isinstance(chunk, FlushSentinel):
+                # Call the sentinel callback if provided
+                if on_sentinel is not None:
+                    try:
+                        on_sentinel(chunk)
+                    except Exception:
+                        logger.exception("error in on_sentinel callback")
                 return
             yield chunk
 
@@ -333,28 +349,37 @@ async def _text_forwarding_task(
             text_output.flush()
 
 
+AudioSegmentCallback = Callable[[], None]
+
+
 @dataclass
 class _AudioOutput:
     audio: list[rtc.AudioFrame]
     first_frame_fut: asyncio.Future[float]
     """Future that will be set with the timestamp of the first frame's capture"""
+    resampler: rtc.AudioResampler | None = None
+    """The audio resampler instance, if resampling is needed"""
 
 
 def perform_audio_forwarding(
     *,
     audio_output: io.AudioOutput,
-    tts_output: AsyncIterable[rtc.AudioFrame],
+    tts_output: AsyncIterable[rtc.AudioFrame | AudioFlushSentinel],
+    on_audio_segment_complete: AudioSegmentCallback | None = None,
 ) -> tuple[asyncio.Task[None], _AudioOutput]:
     out = _AudioOutput(audio=[], first_frame_fut=asyncio.Future())
-    task = asyncio.create_task(_audio_forwarding_task(audio_output, tts_output, out))
+    task = asyncio.create_task(
+        _audio_forwarding_task(audio_output, tts_output, out, on_audio_segment_complete)
+    )
     return task, out
 
 
 @utils.log_exceptions(logger=logger)
 async def _audio_forwarding_task(
     audio_output: io.AudioOutput,
-    tts_output: AsyncIterable[rtc.AudioFrame],
+    tts_output: AsyncIterable[rtc.AudioFrame | AudioFlushSentinel],
     out: _AudioOutput,
+    on_audio_segment_complete: AudioSegmentCallback | None = None,
 ) -> None:
     resampler: rtc.AudioResampler | None = None
 
@@ -367,6 +392,16 @@ async def _audio_forwarding_task(
         audio_output.resume()
 
         async for frame in tts_output:
+            # Check for AudioFlushSentinel marker
+            if isinstance(frame, AudioFlushSentinel):
+                # Call the segment complete callback if provided
+                if on_audio_segment_complete is not None:
+                    try:
+                        on_audio_segment_complete()
+                    except Exception:
+                        logger.exception("error in on_audio_segment_complete callback")
+                continue
+
             out.audio.append(frame)
 
             if (
@@ -380,6 +415,9 @@ async def _audio_forwarding_task(
                     output_rate=audio_output.sample_rate,
                     num_channels=frame.num_channels,
                 )
+
+            # Store the resampler reference in the output data
+            out.resampler = resampler
 
             if resampler:
                 for f in resampler.push(frame):

@@ -1241,6 +1241,12 @@ class AgentActivity(RecognitionHooks):
             self._start_false_interruption_timer(timeout)
 
     def on_vad_inference_done(self, ev: vad.VADEvent) -> None:
+        # Call the agent's VAD event hook before internal processing
+        try:
+            self._agent.on_vad_event(ev)
+        except Exception:
+            logger.exception("error in on_vad_event hook")
+
         if self._turn_detection in ("manual", "realtime_llm"):
             # ignore vad inference done event if turn_detection is manual or realtime_llm
             return
@@ -1840,6 +1846,13 @@ class AgentActivity(RecognitionHooks):
             if self._session.output.transcription_enabled
             else None
         )
+
+        # Call the pipeline started hook
+        try:
+            await self._agent.on_pipeline_started(audio_output, text_output)
+        except Exception:
+            logger.exception("error in on_pipeline_started hook")
+
         chat_ctx = chat_ctx.copy()
         tool_ctx = llm.ToolContext(tools)
 
@@ -2071,6 +2084,12 @@ class AgentActivity(RecognitionHooks):
             if self._session.agent_state == "speaking":
                 self._session._update_agent_state("listening")
 
+            # Call the pipeline completed hook
+            try:
+                await self._agent.on_pipeline_completed()
+            except Exception:
+                logger.exception("error in on_pipeline_completed hook")
+
             speech_handle._mark_generation_done()
             await utils.aio.cancel_and_wait(exe_task)
             return
@@ -2101,6 +2120,12 @@ class AgentActivity(RecognitionHooks):
             self._session._update_agent_state("listening")
 
         await text_tee.aclose()
+
+        # Call the pipeline completed hook
+        try:
+            await self._agent.on_pipeline_completed()
+        except Exception:
+            logger.exception("error in on_pipeline_completed hook")
 
         speech_handle._mark_generation_done()  # mark the playout done before waiting for the tool execution  # noqa: E501
         self._background_speeches.add(speech_handle)

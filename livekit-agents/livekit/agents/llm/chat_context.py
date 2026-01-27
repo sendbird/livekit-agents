@@ -218,10 +218,36 @@ ChatItem = Annotated[
 class ChatContext:
     def __init__(self, items: NotGivenOr[list[ChatItem]] = NOT_GIVEN):
         self._items: list[ChatItem] = items if is_given(items) else []
+        self._default_created_at: NotGivenOr[float] = NOT_GIVEN
+        self._default_extra: NotGivenOr[dict[str, Any]] = NOT_GIVEN
 
     @classmethod
     def empty(cls) -> ChatContext:
         return cls([])
+
+    def set_default_message_metadata(
+        self,
+        *,
+        created_at: NotGivenOr[float] = NOT_GIVEN,
+        extra: NotGivenOr[dict[str, Any]] = NOT_GIVEN,
+    ) -> None:
+        """Set default metadata values that will be applied to new messages.
+
+        These defaults are used when add_message is called without explicit values
+        for created_at or extra. This is useful for injecting context-specific
+        metadata into messages without modifying the add_message call site.
+
+        Args:
+            created_at: Default timestamp to use for new messages
+            extra: Default extra data to merge into new messages
+        """
+        self._default_created_at = created_at
+        self._default_extra = extra
+
+    def clear_default_message_metadata(self) -> None:
+        """Clear any default message metadata that was previously set."""
+        self._default_created_at = NOT_GIVEN
+        self._default_extra = NOT_GIVEN
 
     @property
     def items(self) -> list[ChatItem]:
@@ -247,20 +273,31 @@ class ChatContext:
             kwargs["id"] = id
         if is_given(interrupted):
             kwargs["interrupted"] = interrupted
-        if is_given(created_at):
-            kwargs["created_at"] = created_at
+
+        # Use explicit created_at if given, otherwise fall back to default
+        effective_created_at = created_at if is_given(created_at) else self._default_created_at
+        if is_given(effective_created_at):
+            kwargs["created_at"] = effective_created_at
+
         if is_given(metrics):
             kwargs["metrics"] = metrics
+
+        # Merge default extra with explicit extra (explicit takes precedence)
+        effective_extra: dict[str, Any] = {}
+        if is_given(self._default_extra):
+            effective_extra.update(self._default_extra)
         if is_given(extra):
-            kwargs["extra"] = extra
+            effective_extra.update(extra)
+        if effective_extra:
+            kwargs["extra"] = effective_extra
 
         if isinstance(content, str):
             message = ChatMessage(role=role, content=[content], **kwargs)
         else:
             message = ChatMessage(role=role, content=content, **kwargs)
 
-        if is_given(created_at):
-            idx = self.find_insertion_index(created_at=created_at)
+        if is_given(effective_created_at):
+            idx = self.find_insertion_index(created_at=effective_created_at)
             self._items.insert(idx, message)
         else:
             self._items.append(message)
@@ -337,7 +374,11 @@ class ChatContext:
 
             items.append(item)
 
-        return ChatContext(items)
+        new_ctx = ChatContext(items)
+        # Preserve default message metadata in the copy
+        new_ctx._default_created_at = self._default_created_at
+        new_ctx._default_extra = self._default_extra
+        return new_ctx
 
     def truncate(self, *, max_items: int) -> ChatContext:
         """Truncate the chat context to the last N items in place.
