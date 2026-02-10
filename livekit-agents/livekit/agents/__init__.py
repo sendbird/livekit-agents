@@ -53,7 +53,9 @@ from .types import (
     DEFAULT_API_CONNECT_OPTIONS,
     NOT_GIVEN,
     APIConnectOptions,
+    AudioFlushSentinel,
     FlushSentinel,
+    MessageSeparateSentinel,
     NotGiven,
     NotGivenOr,
 )
@@ -177,6 +179,8 @@ __all__ = [
     "AudioConfig",
     "PlayHandle",
     "FlushSentinel",
+    "MessageSeparateSentinel",
+    "AudioFlushSentinel",
     "io",
     "avatar",
     "cli",
